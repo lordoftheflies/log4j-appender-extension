@@ -1,4 +1,4 @@
-package hu.cherubits.log4j.appender.extension.demo;
+package com.jactravel.logging.extensions.demo;
 
 import org.apache.log4j.Logger;
 import org.springframework.boot.CommandLineRunner;

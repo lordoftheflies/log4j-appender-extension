@@ -1,4 +1,4 @@
-package hu.cherubits.log4j.appender.extension;
+package com.jactravel.logging.extensions;
 
 import org.apache.log4j.AppenderSkeleton;
 import org.apache.log4j.spi.LoggingEvent;

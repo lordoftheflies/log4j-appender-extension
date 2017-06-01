@@ -1,8 +1,6 @@
-package hu.cherubits.log4j.appender.extension.demo;
+package com.jactravel.logging.extensions.demo;
 
 import org.junit.Test;
-
-import static org.junit.Assert.*;
 
 /**
  * Created by lordoftheflies on 2017.06.01..

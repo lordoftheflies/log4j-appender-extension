@@ -1,4 +1,4 @@
-package hu.cherubits.log4j.appender.extension;
+package com.jactravel.logging.extensions;
 
 import org.apache.log4j.Appender;
 import org.apache.log4j.helpers.AppenderAttachableImpl;

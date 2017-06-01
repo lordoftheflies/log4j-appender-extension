@@ -1,4 +1,4 @@
-package hu.cherubits.log4j.appender.extension;
+package com.jactravel.logging.extensions;
 
 /**
  * Created by lordoftheflies on 2017.06.01..
