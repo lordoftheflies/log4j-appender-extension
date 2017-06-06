@@ -1,43 +1,61 @@
 package com.jactravel.logging.extensions;
 
-import org.apache.log4j.Appender;
-import org.apache.log4j.AppenderSkeleton;
+import org.apache.log4j.*;
 import org.apache.log4j.LogManager;
 import org.apache.log4j.Logger;
 import org.apache.log4j.helpers.AppenderAttachableImpl;
 import org.apache.log4j.spi.AppenderAttachable;
 import org.apache.log4j.spi.LoggingEvent;
 
+import java.io.IOException;
 import java.text.MessageFormat;
 import java.util.*;
+import java.util.logging.*;
+import java.util.logging.Level;
 
 /**
  * Created by lordoftheflies on 2017.05.31..
  */
-public class BufferingForwardingAppender extends AppenderSkeleton
+public class BufferingForwardingAppender extends RollingFileAppender
         implements AppenderAttachable {
     /**
      * The default buffer size is set to 128 events.
      */
     public static final int DEFAULT_BUFFER_SIZE = 128;
 
+    private boolean concurrent;
+
+    public boolean isConcurrent() {
+        return concurrent;
+    }
+
+    public void setConcurrent(boolean concurrent) {
+        this.concurrent = concurrent;
+    }
+
     /**
      * Event buffer, also used as monitor to protect itself and
      * discardMap from simulatenous modifications.
      */
-    private final List buffer = new ArrayList();
+    private final List<LoggingEvent> buffer = new ArrayList<LoggingEvent>();
 
     /**
      * Map of DiscardSummary objects keyed by logger name.
      */
     private final Map discardMap = new HashMap();
 
+    private Priority triggerThreshold;
+
+    private String appenderRef;
+
     /**
      * Buffer size.
      */
     private int bufferSize = DEFAULT_BUFFER_SIZE;
 
-    /** Nested appenders. */
+    /**
+     * Nested appenders.
+     */
     AppenderAttachableImpl aai;
 
     /**
@@ -48,7 +66,7 @@ public class BufferingForwardingAppender extends AppenderSkeleton
     /**
      * Dispatcher.
      */
-    private final Thread dispatcher;
+//    private final Thread dispatcher;
 
     /**
      * Should location info be included in dispatched messages.
@@ -61,29 +79,76 @@ public class BufferingForwardingAppender extends AppenderSkeleton
     private boolean blocking = true;
 
 
+    public BufferingForwardingAppender() {
+        super();
+        appenders = new AppenderAttachableImpl();
+    }
+
+//    public BufferingForwardingAppender(Layout layout, String filename, boolean append) throws IOException {
+//        super(layout, filename, append);
+//        appenders = new AppenderAttachableImpl();
+//        aai = appenders;
+//    }
+//
+//    public BufferingForwardingAppender(Layout layout, String filename) throws IOException {
+//        super(layout, filename);
+//        appenders = new AppenderAttachableImpl();
+//        aai = appenders;
+//    }
 
     /**
      * Create new instance.
      */
-    public BufferingForwardingAppender() {
-        super(true);
-        appenders = new AppenderAttachableImpl();
+//    public BufferingForwardingAppender() {
+//        super(true);
+//        appenders = new AppenderAttachableImpl();
+//
+//        //
+//        //   only set for compatibility
+//        aai = appenders;
+//
+////        dispatcher = new Thread(new Dispatcher(this, buffer, discardMap, appenders));
+//
+//        // It is the user's responsibility to close appenders before
+//        // exiting.
+////        dispatcher.setDaemon(true);
+//
+//        // set the dispatcher priority to lowest possible value
+//        //        dispatcher.setPriority(Thread.MIN_PRIORITY);
+////        dispatcher.setName("Dispatcher-" + dispatcher.getName());
+////        dispatcher.start();
+//    }
+    public Priority getTriggerThreshold() {
+        return triggerThreshold;
+    }
 
-        //
-        //   only set for compatibility
-        aai = appenders;
+    public void setTriggerThreshold(Priority triggerThreshold) {
+        this.triggerThreshold = triggerThreshold;
+    }
 
-        dispatcher =
-                new Thread(new Dispatcher(this, buffer, discardMap, appenders));
+//    public String getAppenderRef() {
+//        return appenderRef;
+//    }
+//
+//    public void setAppenderRef(String appenderRef) {
+//        Enumeration appender = null;
+//        if (this.appenderRef == null) {
+//            this.appenderRef = appenderRef;
+//            appender = this.getAllAppenders();
+//        }
+//        this.appenderRef = appenderRef;
+//    }
 
-        // It is the user's responsibility to close appenders before
-        // exiting.
-        dispatcher.setDaemon(true);
+    public void setAppenderFromLogger(String name) {
+        Logger l = Logger.getLogger(name);
 
-        // set the dispatcher priority to lowest possible value
-        //        dispatcher.setPriority(Thread.MIN_PRIORITY);
-        dispatcher.setName("Dispatcher-" + dispatcher.getName());
-        dispatcher.start();
+        Enumeration<Appender> e = l.getAllAppenders();
+
+        while (e.hasMoreElements()) {
+            Appender a = e.nextElement();
+            this.addAppender(a);
+            System.out.println("The newAppender " + a.getName() + " attach status " + this.isAttached(a));
+        }
     }
 
     /**
@@ -91,99 +156,116 @@ public class BufferingForwardingAppender extends AppenderSkeleton
      *
      * @param newAppender appender to add, may not be null.
      */
+    @Override
     public void addAppender(final Appender newAppender) {
         synchronized (appenders) {
             appenders.addAppender(newAppender);
         }
     }
 
+
     /**
      * {@inheritDoc}
      */
+    @Override
     public void append(final LoggingEvent event) {
+
+        if (this.getTriggerThreshold().isGreaterOrEqual(event.getLevel())) {
+            System.out.println("Add event to buffer: " + event.getLevel() + ":" + event.getMessage());
+            buffer.add(event);
+        }
+
+
+        if (event.getLevel().isGreaterOrEqual(this.getTriggerThreshold())) {
+            System.out.println("Forwarding buffer with " + buffer.size() + ": " + event.getLevel() + ":" + event.getMessage());
+            buffer.stream().forEach(e -> BufferingForwardingAppender.super.append(e));
+            buffer.clear();
+        }
         //
         //   if dispatcher thread has died then
         //      append subsequent events synchronously
         //   See bug 23021
-        if ((dispatcher == null) || !dispatcher.isAlive() || (bufferSize <= 0)) {
-            synchronized (appenders) {
-                appenders.appendLoopOnAppenders(event);
-            }
-
-            return;
-        }
+//        if ((dispatcher == null) || !dispatcher.isAlive() || (bufferSize <= 0)) {
+//            synchronized (appenders) {
+//                appenders.appendLoopOnAppenders(event);
+//            }
+//
+//            return;
+//        }
 
         // TODO: Check
         // extract all the thread dependent information now as later it will be too late.
         //event.prepareForDeferredProcessing();
 
-        if (locationInfo) {
-            event.getLocationInformation();
-        }
+//        if (locationInfo) {
+//            event.getLocationInformation();
+//        }
 
-        synchronized (buffer) {
-            while (true) {
-                int previousSize = buffer.size();
+//        synchronized (buffer) {
+//            while (true) {
+//                int previousSize = buffer.size();
 
-                if (previousSize < bufferSize) {
-                    buffer.add(event);
+        // TODO: Check
+//                if (previousSize < bufferSize) {
+//                    buffer.add(event);
+//
+//                    //
+//                    //   if buffer had been empty
+//                    //       signal all threads waiting on buffer
+//                    //       to check their conditions.
+//                    //
+//                    if (previousSize == 0) {
+//                        buffer.notifyAll();
+//                    }
+//
+//                    break;
+//                }
 
-                    //
-                    //   if buffer had been empty
-                    //       signal all threads waiting on buffer
-                    //       to check their conditions.
-                    //
-                    if (previousSize == 0) {
-                        buffer.notifyAll();
-                    }
+        // TODO: Check
+//                //
+//                //   Following code is only reachable if buffer is full
+//                //
+//                //
+//                //   if blocking and thread is not already interrupted
+//                //      and not the dispatcher then
+//                //      wait for a buffer notification
+//                boolean discard = true;
+//                if (blocking
+//                        && !Thread.interrupted()
+//                        && Thread.currentThread() != dispatcher) {
+//                    try {
+//                        buffer.wait();
+//                        discard = false;
+//                    } catch (InterruptedException e) {
+//                        //
+//                        //  reset interrupt status so
+//                        //    calling code can see interrupt on
+//                        //    their next wait or sleep.
+//                        Thread.currentThread().interrupt();
+//                    }
+//                }
 
-                    break;
-                }
-
-                //
-                //   Following code is only reachable if buffer is full
-                //
-                //
-                //   if blocking and thread is not already interrupted
-                //      and not the dispatcher then
-                //      wait for a buffer notification
-                boolean discard = true;
-                if (blocking
-                        && !Thread.interrupted()
-                        && Thread.currentThread() != dispatcher) {
-                    try {
-                        buffer.wait();
-                        discard = false;
-                    } catch (InterruptedException e) {
-                        //
-                        //  reset interrupt status so
-                        //    calling code can see interrupt on
-                        //    their next wait or sleep.
-                        Thread.currentThread().interrupt();
-                    }
-                }
-
-                //
-                //   if blocking is false or thread has been interrupted
-                //   add event to discard map.
-                //
-                if (discard) {
-                    String loggerName = event.getLoggerName();
-                    DiscardSummary summary = (DiscardSummary) discardMap.get(loggerName);
-
-                    if (summary == null) {
-                        summary = new DiscardSummary(event);
-                        discardMap.put(loggerName, summary);
-                    } else {
-                        summary.add(event);
-                    }
-
-                    break;
-                }
-            }
-        }
+        // TODO: Check
+        //
+        //   if blocking is false or thread has been interrupted
+        //   add event to discard map.
+        //
+//                if (discard) {
+//                    String loggerName = event.getLoggerName();
+////                    DiscardSummary summary = (DiscardSummary) discardMap.get(loggerName);
+////
+////                    if (summary == null) {
+////                        summary = new DiscardSummary(event);
+////                        discardMap.put(loggerName, summary);
+////                    } else {
+////                        summary.add(event);
+////                    }
+//
+//                    break;
+//                }
+//            }
+//        }
     }
-
 
 
     /**
@@ -197,17 +279,17 @@ public class BufferingForwardingAppender extends AppenderSkeleton
          */
         synchronized (buffer) {
             closed = true;
-            buffer.notifyAll();
+//            buffer.notifyAll();
         }
 
-        try {
-            dispatcher.join();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            getLogger().error(
-                    "Got an InterruptedException while waiting for the "
-                            + "dispatcher to finish.", e);
-        }
+//        try {
+//            dispatcher.join();
+//        } catch (InterruptedException e) {
+//            Thread.currentThread().interrupt();
+//            getLogger().error(
+//                    "Got an InterruptedException while waiting for the "
+//                            + "dispatcher to finish.", e);
+//        }
 
         //
         //    close all attached appenders.
@@ -229,6 +311,7 @@ public class BufferingForwardingAppender extends AppenderSkeleton
 
     /**
      * Get iterator over attached appenders.
+     *
      * @return iterator or null if no attached appenders.
      */
     public Enumeration getAllAppenders() {
@@ -261,6 +344,7 @@ public class BufferingForwardingAppender extends AppenderSkeleton
 
     /**
      * Determines if specified appender is attached.
+     *
      * @param appender appender.
      * @return true if attached.
      */
@@ -273,9 +357,9 @@ public class BufferingForwardingAppender extends AppenderSkeleton
     /**
      * {@inheritDoc}
      */
-    public boolean requiresLayout() {
-        return false;
-    }
+//    public boolean requiresLayout() {
+//        return true;
+//    }
 
     /**
      * Removes and closes all attached appenders.
@@ -288,6 +372,7 @@ public class BufferingForwardingAppender extends AppenderSkeleton
 
     /**
      * Removes an appender.
+     *
      * @param appender appender to remove.
      */
     public void removeAppender(final Appender appender) {
@@ -298,6 +383,7 @@ public class BufferingForwardingAppender extends AppenderSkeleton
 
     /**
      * Remove appender by name.
+     *
      * @param name name.
      */
     public void removeAppender(final String name) {
@@ -317,6 +403,7 @@ public class BufferingForwardingAppender extends AppenderSkeleton
      * Location information extraction is comparatively very slow and should be
      * avoided unless performance is not a concern.
      * </p>
+     *
      * @param flag true if location information should be extracted.
      */
     public void setLocationInfo(final boolean flag) {
@@ -351,6 +438,7 @@ public class BufferingForwardingAppender extends AppenderSkeleton
 
     /**
      * Gets the current buffer size.
+     *
      * @return the current value of the <b>BufferSize</b> option.
      */
     public int getBufferSize() {
@@ -389,178 +477,178 @@ public class BufferingForwardingAppender extends AppenderSkeleton
         return LogManager.getRootLogger();
     }
 
-    /**
-     * Summary of discarded logging events for a logger.
-     */
-    private static final class DiscardSummary {
-        /**
-         * First event of the highest severity.
-         */
-        private LoggingEvent maxEvent;
-
-        /**
-         * Total count of messages discarded.
-         */
-        private int count;
-
-        /**
-         * Create new instance.
-         *
-         * @param event event, may not be null.
-         */
-        public DiscardSummary(final LoggingEvent event) {
-            maxEvent = event;
-            count = 1;
-        }
-
-        /**
-         * Add discarded event to summary.
-         *
-         * @param event event, may not be null.
-         */
-        public void add(final LoggingEvent event) {
-            if (event.getLevel().toInt() > maxEvent.getLevel().toInt()) {
-                maxEvent = event;
-            }
-
-            count++;
-        }
-
-        /**
-         * Create event with summary information.
-         *
-         * @return new event.
-         */
-        public LoggingEvent createEvent() {
-            String msg =
-                    MessageFormat.format(
-                            "Discarded {0} messages due to full event buffer including: {1}",
-                            new Object[] { new Integer(count), maxEvent.getMessage() });
-
-            return new LoggingEvent(
-                    "org.apache.log4j.AsyncAppender.DONT_REPORT_LOCATION",
-                    maxEvent.getLogger(),
-                    maxEvent.getLevel(),
-                    msg,
-                    null);
-        }
-    }
-
-    /**
-     * Event dispatcher.
-     */
-    private static class Dispatcher implements Runnable {
-        /**
-         * Parent AsyncAppender.
-         */
-        private final BufferingForwardingAppender parent;
-
-        /**
-         * Event buffer.
-         */
-        private final List buffer;
-
-        /**
-         * Map of DiscardSummary keyed by logger name.
-         */
-        private final Map discardMap;
-
-        /**
-         * Wrapped appenders.
-         */
-        private final AppenderAttachableImpl appenders;
-
-        /**
-         * Create new instance of dispatcher.
-         *
-         * @param parent     parent AsyncAppender, may not be null.
-         * @param buffer     event buffer, may not be null.
-         * @param discardMap discard map, may not be null.
-         * @param appenders  appenders, may not be null.
-         */
-        public Dispatcher(
-                final BufferingForwardingAppender parent, final List buffer, final Map discardMap,
-                final AppenderAttachableImpl appenders) {
-
-            this.parent = parent;
-            this.buffer = buffer;
-            this.appenders = appenders;
-            this.discardMap = discardMap;
-        }
-
-        /**
-         * {@inheritDoc}
-         */
-        public void run() {
-            boolean isActive = true;
-
-            //
-            //   if interrupted (unlikely), end thread
-            //
-            try {
-                //
-                //   loop until the AsyncAppender is closed.
-                //
-                while (isActive) {
-                    LoggingEvent[] events = null;
-
-                    //
-                    //   extract pending events while synchronized
-                    //       on buffer
-                    //
-                    synchronized (buffer) {
-                        int bufferSize = buffer.size();
-                        isActive = !parent.isClosed();
-
-                        while ((bufferSize == 0) && isActive) {
-                            buffer.wait();
-                            bufferSize = buffer.size();
-                            isActive = !parent.isClosed();
-                        }
-
-                        if (bufferSize > 0) {
-                            events = new LoggingEvent[bufferSize + discardMap.size()];
-                            buffer.toArray(events);
-
-                            //
-                            //   add events due to buffer overflow
-                            //
-                            int index = bufferSize;
-
-                            for (
-                                    Iterator iter = discardMap.values().iterator();
-                                    iter.hasNext(); ) {
-                                events[index++] = ((DiscardSummary) iter.next()).createEvent();
-                            }
-
-                            //
-                            //    clear buffer and discard map
-                            //
-                            buffer.clear();
-                            discardMap.clear();
-
-                            //
-                            //    allow blocked appends to continue
-                            buffer.notifyAll();
-                        }
-                    }
-
-                    //
-                    //   process events after lock on buffer is released.
-                    //
-                    if (events != null) {
-                        for (int i = 0; i < events.length; i++) {
-                            synchronized (appenders) {
-                                appenders.appendLoopOnAppenders(events[i]);
-                            }
-                        }
-                    }
-                }
-            } catch (InterruptedException ex) {
-                Thread.currentThread().interrupt();
-            }
-        }
-    }
-    
-    
+//    /**
+//     * Summary of discarded logging events for a logger.
+//     */
+//    private static final class DiscardSummary {
+//        /**
+//         * First event of the highest severity.
+//         */
+//        private LoggingEvent maxEvent;
+//
+//        /**
+//         * Total count of messages discarded.
+//         */
+//        private int count;
+//
+//        /**
+//         * Create new instance.
+//         *
+//         * @param event event, may not be null.
+//         */
+//        public DiscardSummary(final LoggingEvent event) {
+//            maxEvent = event;
+//            count = 1;
+//        }
+//
+//        /**
+//         * Add discarded event to summary.
+//         *
+//         * @param event event, may not be null.
+//         */
+//        public void add(final LoggingEvent event) {
+//            if (event.getLevel().toInt() > maxEvent.getLevel().toInt()) {
+//                maxEvent = event;
+//            }
+//
+//            count++;
+//        }
+//
+//        /**
+//         * Create event with summary information.
+//         *
+//         * @return new event.
+//         */
+//        public LoggingEvent createEvent() {
+//            String msg =
+//                    MessageFormat.format(
+//                            "Discarded {0} messages due to full event buffer including: {1}",
+//                            new Object[] { new Integer(count), maxEvent.getMessage() });
+//
+//            return new LoggingEvent(
+//                    "org.apache.log4j.AsyncAppender.DONT_REPORT_LOCATION",
+//                    maxEvent.getLogger(),
+//                    maxEvent.getLevel(),
+//                    msg,
+//                    null);
+//        }
+//    }
+//
+//    /**
+//     * Event dispatcher.
+//     */
+//    private static class Dispatcher implements Runnable {
+//        /**
+//         * Parent AsyncAppender.
+//         */
+//        private final BufferingForwardingAppender parent;
+//
+//        /**
+//         * Event buffer.
+//         */
+//        private final List buffer;
+//
+//        /**
+//         * Map of DiscardSummary keyed by logger name.
+//         */
+//        private final Map discardMap;
+//
+//        /**
+//         * Wrapped appenders.
+//         */
+//        private final AppenderAttachableImpl appenders;
+//
+//        /**
+//         * Create new instance of dispatcher.
+//         *
+//         * @param parent     parent AsyncAppender, may not be null.
+//         * @param buffer     event buffer, may not be null.
+//         * @param discardMap discard map, may not be null.
+//         * @param appenders  appenders, may not be null.
+//         */
+//        public Dispatcher(
+//                final BufferingForwardingAppender parent, final List buffer, final Map discardMap,
+//                final AppenderAttachableImpl appenders) {
+//
+//            this.parent = parent;
+//            this.buffer = buffer;
+//            this.appenders = appenders;
+//            this.discardMap = discardMap;
+//        }
+//
+//        /**
+//         * {@inheritDoc}
+//         */
+//        public void run() {
+//            boolean isActive = true;
+//
+//            //
+//            //   if interrupted (unlikely), end thread
+//            //
+//            try {
+//                //
+//                //   loop until the AsyncAppender is closed.
+//                //
+//                while (isActive) {
+//                    LoggingEvent[] events = null;
+//
+//                    //
+//                    //   extract pending events while synchronized
+//                    //       on buffer
+//                    //
+//                    synchronized (buffer) {
+//                        int bufferSize = buffer.size();
+//                        isActive = !parent.isClosed();
+//
+//                        while ((bufferSize == 0) && isActive) {
+//                            buffer.wait();
+//                            bufferSize = buffer.size();
+//                            isActive = !parent.isClosed();
+//                        }
+//
+//                        if (bufferSize > 0) {
+//                            events = new LoggingEvent[bufferSize + discardMap.size()];
+//                            buffer.toArray(events);
+//
+//                            //
+//                            //   add events due to buffer overflow
+//                            //
+//                            int index = bufferSize;
+//
+//                            for (
+//                                    Iterator iter = discardMap.values().iterator();
+//                                    iter.hasNext(); ) {
+//                                events[index++] = ((DiscardSummary) iter.next()).createEvent();
+//                            }
+//
+//                            //
+//                            //    clear buffer and discard map
+//                            //
+//                            buffer.clear();
+//                            discardMap.clear();
+//
+//                            //
+//                            //    allow blocked appends to continue
+//                            buffer.notifyAll();
+//                        }
+//                    }
+//
+//                    //
+//                    //   process events after lock on buffer is released.
+//                    //
+//                    if (events != null) {
+//                        for (int i = 0; i < events.length; i++) {
+//                            synchronized (appenders) {
+//                                appenders.appendLoopOnAppenders(events[i]);
+//                            }
+//                        }
+//                    }
+//                }
+//            } catch (InterruptedException ex) {
+//                Thread.currentThread().interrupt();
+//            }
+//        }
+//    }
+//
+//
 }
